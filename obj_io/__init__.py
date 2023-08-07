@@ -1,2 +1,2 @@
-from .core import ObjMesh, loadObj, saveObj, loadObjSimple, saveObjSimple, \
+from .obj_io import ObjMesh, loadObj, saveObj, loadObjSimple, saveObjSimple, \
     removeByVid

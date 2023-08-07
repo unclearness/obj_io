@@ -1,6 +1,7 @@
 
 from dataclasses import dataclass, field
 from typing import TypeAlias
+from wsgiref.simple_server import demo_app
 import numpy as np
 
 
@@ -32,11 +33,58 @@ class ObjMesh:
                 setattr(self, k, v.tolist())
 
     def recomputeNormals(self):
-        pass
+        POLY_NUM = len(self.indices[0])
+
+        def normalize(v):
+            return v / np.linalg.norm(v, axis=1, keepdims=True)
+        if POLY_NUM >= 3:
+            v10 = normalize(
+                self.verts[self.indices[..., 1]]
+                - self.verts[self.indices[..., 0]])
+            v20 = normalize(
+                self.verts[self.indices[..., 2]]
+                - self.verts[self.indices[..., 0]])
+            face_normals_tmp = normalize(np.cross(v10, v20, axis=1))
+        else:
+            raise Exception("")
+        if POLY_NUM == 3:
+            face_normals = face_normals_tmp
+        else:
+            # (FACE_NUM, POLY_NUM, 3)
+            def pca(X: np.array):
+                F, P, _ = X.shape
+                demean = X - X.mean(axis=1, keepdims=True)
+                cov = np.einsum('ikj,ikl->ijl', demean, demean)
+                vals, vecs = np.linalg.eig(cov)
+                min_index = np.argsort(vals, axis=1)
+                vecs = vecs.transpose(0, 2, 1)
+                n = np.take_along_axis(
+                    vecs, min_index[..., None], axis=1)
+                return n[:, 0]
+            face_verts = self.verts[self.indices]
+            face_normals = pca(face_verts)
+            flipped_mask = np.einsum(
+                "ij,ij->i", face_normals_tmp, face_normals) < 0
+            face_normals[flipped_mask] *= -1.0
+
+        counts = np.zeros(self.verts.shape[0], dtype=int)
+        normal_sum = np.zeros_like(self.verts)
+        for fid, fn in enumerate(face_normals):
+            for i in range(POLY_NUM):
+                vid = self.indices[fid][i]
+                counts[vid] += 1
+                normal_sum[vid] += fn
+        invalid_mask = counts <= 0
+        counts[invalid_mask] = 1
+        normals = normal_sum / counts[..., None]
+        normals = normalize(normals)
+        self.normals = normals
+
+        self.normal_indices = self.indices
 
 
-ObjIoVec: TypeAlias = list[float] | list[list[float]]
-ObjIoIndices: TypeAlias = list[int] | list[list[int]]
+ObjIoVec: TypeAlias = list[float] | list[list[float]] | np.ndarray
+ObjIoIndices: TypeAlias = list[int] | list[list[int]] | np.ndarray
 
 
 def loadObjSimple(obj_path: str):
@@ -160,7 +208,6 @@ def saveObjSimple(
             if len(uv_indices) > 0:
                 fStr += "/%s" % (uv_indices[fi][fvi] + 1)
             if len(normal_indices) > 0:
-                print(len(normal_indices[0]))
                 fStr += "/%s" % (normal_indices[fi][fvi] + 1)
         fStr += "\n"
         f_out.write(fStr)
